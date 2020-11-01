@@ -5128,7 +5128,7 @@ swofp_flow_mod_cmd_add(struct switch_softc *sc, struct mbuf *m)
 	 * 2) OXM filters can't be bigger than the packet.
 	 */
 	if (omlen < sizeof(*om) ||
-	    omlen >= (m->m_len - sizeof(*ofm))) {
+	    omlen > (m->m_len - sizeof(*ofm))) {
 		etype = OFP_ERRTYPE_BAD_MATCH;
 		error = OFP_ERRMATCH_BAD_LEN;
 		goto ofp_error;
@@ -5250,7 +5250,7 @@ swofp_flow_mod_cmd_common_modify(struct switch_softc *sc, struct mbuf *m,
 	 * 2) OXM filters can't be bigger than the packet.
 	 */
 	if (omlen < sizeof(*om) ||
-	    omlen >= (m->m_len - sizeof(*ofm))) {
+	    omlen > (m->m_len - sizeof(*ofm))) {
 		etype = OFP_ERRTYPE_BAD_MATCH;
 		error = OFP_ERRMATCH_BAD_LEN;
 		goto ofp_error;
@@ -5340,7 +5340,7 @@ swofp_flow_mod_cmd_common_delete(struct switch_softc *sc, struct mbuf *m,
 	 * 2) OXM filters can't be bigger than the packet.
 	 */
 	if (omlen < sizeof(*om) ||
-	    omlen >= (m->m_len - sizeof(*ofm))) {
+	    omlen > (m->m_len - sizeof(*ofm))) {
 		etype = OFP_ERRTYPE_BAD_MATCH;
 		error = OFP_ERRMATCH_BAD_LEN;
 		goto ofp_error;
