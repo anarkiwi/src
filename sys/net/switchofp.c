@@ -55,6 +55,7 @@
  * Per-frame debugging can be done at any time using the BPF
  * hook of DLT_OPENFLOW (eg. tcpdump -y openflow -i switch0)
  */
+#define DEBUG 1
 #ifdef DEBUG
 #define DPRINTF(__sc, ...)				\
 do {							\
