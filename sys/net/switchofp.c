@@ -3433,7 +3433,7 @@ swofp_action_output_controller(struct switch_softc *sc, struct mbuf *m0,
 
 	pin->pin_buffer_id = htonl(OFP_PKTOUT_NO_BUFFER);
 	pin->pin_table_id = swpld->swpld_table_id;
-	pin->pin_cookie = swpld->swpld_cookie;
+	pin->pin_cookie = htobe64(swpld->swpld_cookie);
 	pin->pin_reason = reason;
 
 	if (frame_max_len) {
