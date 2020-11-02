@@ -480,6 +480,11 @@ struct ofp_flow_mod {
 	struct ofp_match	fm_match;
 } __packed;
 
+/* OpenFlow 1.3.5 secion 7.2.3.1 is ambiguous on whether length field,
+   includes length of type and length fields.  A controller might send
+   either length 4 or length 0 for no matches. */
+#define	OFP_MATCH_MIN_LEN	4
+
 /* Flow removed reasons */
 #define OFP_FLOWREM_REASON_IDLE_TIMEOUT	0	/* Flow idle time exceeded idle_timeout */
 #define OFP_FLOWREM_REASON_HARD_TIMEOUT	1	/* Time exceeded hard_timeout */
