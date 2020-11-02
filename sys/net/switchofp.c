@@ -4620,6 +4620,7 @@ swofp_forward_ofs(struct switch_softc *sc, struct switch_flow_classify *swfcl,
 	TAILQ_FOREACH(swft, &ofs->swofs_table_list, swft_table_next) {
 		if (swft->swft_table_id != next_table_id)
 			continue;
+		int table_actions_pending = 0;
 
 		/* XXX
 		 * The metadata is pipeline parameters but it uses same match
@@ -4650,6 +4651,7 @@ swofp_forward_ofs(struct switch_softc *sc, struct switch_flow_classify *swfcl,
 			    swfe->swfe_apply_actions);
 			if (m == NULL)
 				goto out;
+			table_actions_pending = 1;
 		}
 
 		if (swfe->swfe_clear_actions) {
@@ -4662,6 +4664,7 @@ swofp_forward_ofs(struct switch_softc *sc, struct switch_flow_classify *swfcl,
 		if (swfe->swfe_write_actions) {
 			error = swofp_write_actions(
 			    swfe->swfe_write_actions, swpld);
+			table_actions_pending = 1;
 			if (error)
 				goto out;
 		}
@@ -4673,6 +4676,10 @@ swofp_forward_ofs(struct switch_softc *sc, struct switch_flow_classify *swfcl,
 			next_table_id = swfe->swfe_goto_table->igt_table_id;
 		else
 			break;
+
+		if (table_actions_pending)
+			if ((m = swofp_apply_set_field(m, swpld)) == NULL)
+				goto out;
 	}
 
 	m = swofp_execute_action_set(sc, m, swpld);
