@@ -2868,11 +2868,19 @@ swofp_ox_match_vlan_vid(struct switch_flow_classify *swfcl,
 {
 	uint16_t	 in, mth, mask = 0;
 
+	memcpy(&mth, oxm->oxm_value, sizeof(uint16_t));
+
+        /*
+         * OpenFlow Switch Specification ver 1.3.5 says if oxm value
+         * is OFP_XM_VID_NONE, matches only packets without a VLAN tag
+         */
+	if (mth == htons(OFP_XM_VID_NONE)) {
+		if (swfcl->swfcl_vlan == NULL)
+			return (0);
+	}
+
 	if (swfcl->swfcl_vlan == NULL)
 		return (1);
-
-	in = swfcl->swfcl_vlan->vlan_vid;
-	memcpy(&mth, oxm->oxm_value, sizeof(uint16_t));
 
 	if (OFP_OXM_GET_HASMASK(oxm))
 		memcpy(&mask, oxm->oxm_value + sizeof(uint16_t),
@@ -2880,12 +2888,7 @@ swofp_ox_match_vlan_vid(struct switch_flow_classify *swfcl,
 	else
 		mask = UINT16_MAX;
 
-	/*
-	 * OpenFlow Switch Specification ver 1.3.5 says if oxm value
-	 * is OFP_XM_VID_NONE, matches only packets without a VLAN tag
-	 */
-	if (mth == htons(OFP_XM_VID_NONE))
-		return (1);
+	in = swfcl->swfcl_vlan->vlan_vid;
 
 	/*
 	 * OpenFlow Switch Specification ver 1.3.5 says if oxm value and mask
