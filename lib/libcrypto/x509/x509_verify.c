@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_verify.c,v 1.16 2020/10/26 12:01:01 tb Exp $ */
+/* $OpenBSD: x509_verify.c,v 1.18 2020/11/03 17:43:01 jsing Exp $ */
 /*
  * Copyright (c) 2020 Bob Beck <beck@openbsd.org>
  *
@@ -333,12 +333,11 @@ x509_verify_consider_candidate(struct x509_verify_ctx *ctx, X509 *cert,
 		return 0;
 	}
 
-
 	if (!x509_verify_parent_signature(candidate, cert, cert_md,
 	    &ctx->error)) {
-		    if (!x509_verify_cert_error(ctx, candidate, depth,
-			ctx->error, 0))
-			    return 0;
+		if (!x509_verify_cert_error(ctx, candidate, depth,
+		    ctx->error, 0))
+			return 0;
 	}
 
 	if (!x509_verify_cert_valid(ctx, candidate, current_chain))
@@ -401,7 +400,7 @@ x509_verify_build_chains(struct x509_verify_ctx *ctx, X509 *cert,
 {
 	unsigned char cert_md[EVP_MAX_MD_SIZE] = { 0 };
 	X509 *candidate;
-	int i, depth, count;
+	int i, depth, count, ret;
 
 	depth = sk_X509_num(current_chain->certs);
 	if (depth > 0)
@@ -428,7 +427,6 @@ x509_verify_build_chains(struct x509_verify_ctx *ctx, X509 *cert,
 			    cert_md, 1, candidate, current_chain);
 		}
 	}
-
 	if (ctx->intermediates != NULL) {
 		for (i = 0; i < sk_X509_num(ctx->intermediates); i++) {
 			candidate = sk_X509_value(ctx->intermediates, i);
@@ -438,6 +436,21 @@ x509_verify_build_chains(struct x509_verify_ctx *ctx, X509 *cert,
 			}
 		}
 	}
+	if (ctx->xsc != NULL) {
+		if ((ret = ctx->xsc->get_issuer(&candidate, ctx->xsc, cert)) < 0) {
+			x509_verify_cert_error(ctx, cert, depth,
+			    X509_V_ERR_STORE_LOOKUP, 0);
+			return;
+		}
+		if (ret > 0) {
+			if (x509_verify_potential_parent(ctx, candidate, cert)) {
+				x509_verify_consider_candidate(ctx, cert,
+				    cert_md, 1, candidate, current_chain);
+			}
+			X509_free(candidate);
+		}
+	}
+
 	if (ctx->chains_count > count) {
 		if (ctx->xsc != NULL) {
 			ctx->xsc->error = X509_V_OK;
@@ -446,8 +459,8 @@ x509_verify_build_chains(struct x509_verify_ctx *ctx, X509 *cert,
 			(void) ctx->xsc->verify_cb(1, ctx->xsc);
 		}
 	} else if (ctx->error_depth == depth) {
-			(void) x509_verify_cert_error(ctx, cert, depth,
-			    ctx->error, 0);
+		(void) x509_verify_cert_error(ctx, cert, depth,
+		    ctx->error, 0);
 	}
 }
 
