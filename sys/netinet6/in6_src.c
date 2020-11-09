@@ -1,4 +1,4 @@
-/*	$OpenBSD: in6_src.c,v 1.82 2020/10/29 21:15:27 denis Exp $	*/
+/*	$OpenBSD: in6_src.c,v 1.84 2020/11/07 09:51:40 denis Exp $	*/
 /*	$KAME: in6_src.c,v 1.36 2001/02/06 04:08:17 itojun Exp $	*/
 
 /*
@@ -220,19 +220,17 @@ in6_pcbselsrc(struct in6_addr **in6src, struct sockaddr_in6 *dstsock,
 	/*
 	 * Use preferred source address if :
 	 * - destination is not onlink
-	 * - output interface is not PtoP
 	 * - preferred source addresss is set
 	 * - output interface is UP
 	 */
-	if ((ro->ro_rt && !(ro->ro_rt->rt_flags & RTF_LLINFO)) &&
-	    (ia6 && !(ia6->ia_ifp->if_flags & IFF_POINTOPOINT))) {
+	if (ro->ro_rt && !(ro->ro_rt->rt_flags & RTF_LLINFO) &&
+	    !(ro->ro_rt->rt_flags & RTF_HOST)) {
 		ip6_source = rtable_getsource(rtableid, AF_INET6);
 		if (ip6_source != NULL) {
 			struct ifaddr *ifa;
 			if ((ifa = ifa_ifwithaddr(ip6_source, rtableid)) !=
 			    NULL && ISSET(ifa->ifa_ifp->if_flags, IFF_UP)) {
-				*in6src = &((struct sockaddr_in6 *)
-				    ip6_source)->sin6_addr;
+				*in6src = &satosin6(ip6_source)->sin6_addr;
 				return (0);
 			}
 		}

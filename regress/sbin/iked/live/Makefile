@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.22 2020/09/15 11:26:48 tobhe Exp $
+#	$OpenBSD: Makefile,v 1.25 2020/11/08 17:11:55 tobhe Exp $
 
 # Copyright (c) 2020 Tobias Heider <tobhe@openbsd.org>
 #
@@ -38,9 +38,13 @@ TEST_FLOWS = \
 		ipsecctlleft=`ssh ${LEFT_SSH} ipsecctl -sa`; \
 		ipsecctlright=`ssh ${RIGHT_SSH} ipsecctl -sa`; \
 		flowleft=`echo "$$ipsecctlleft" \
-		    | sed -n "/^flow $$flowtype in from ${RIGHT_ADDR} to ${LEFT_ADDR}/p"`; \
+		    | sed -E -n "/^flow $$flowtype in from ${RIGHT_ADDR}\
+		    to ${LEFT_ADDR} peer ${RIGHT_ADDR} srcid (FQDN|UFQDN|ASN1_DN)\/[^ ]*\
+		    dstid (FQDN|UFQDN|ASN1_DN)\/[^ ]*/p"`; \
 		flowright=`echo "$$ipsecctlright" \
-		    | sed -n "/^flow $$flowtype in from ${LEFT_ADDR} to ${RIGHT_ADDR}/p"`; \
+		    | sed -E -n "/^flow $$flowtype in from ${LEFT_ADDR}\
+		    to ${RIGHT_ADDR} peer ${LEFT_ADDR} srcid (FQDN|UFQDN|ASN1_DN)\/[^ ]*\
+		    dstid (FQDN|UFQDN|ASN1_DN)\/[^ ]*/p"`; \
 		saleft_rtol=`echo "$$ipsecctlleft" \
 		    | sed -n "/^$$flowtype $$tmode from ${RIGHT_ADDR} to ${LEFT_ADDR}/p"`; \
 		saleft_ltor=`echo "$$ipsecctlleft" \
@@ -105,10 +109,12 @@ SETUP_CONFIG = \
 	fi; \
 	echo "MODE=\"$$mode\"" >> $@_$$side.conf; \
 	echo "TMODE=\"$$tmode\"" >> $@_$$side.conf; \
+	echo "FROM=\"$$local\"" >> $@_$$side.conf; \
+	echo "TO=\"$$peer\"" >> $@_$$side.conf; \
 	echo "LOCAL_ADDR=\"$$local\"" >> $@_$$side.conf; \
 	echo "PEER_ADDR=\"$$peer\"" >> $@_$$side.conf; \
 	echo "IPCOMP=\"$$ipcomp\"" >> $@_$$side.conf; \
-	echo "SRCID=\"$$srcid\"" >> $@_$$side.conf; \
+	echo "SRCID=\"\\\"$$srcid\\\"\"" >> $@_$$side.conf; \
 	echo "DSTID=\"$$dstid\"" >> $@_$$side.conf; \
 	echo "AUTH=\"$$authstr\"" >> $@_$$side.conf; \
 	echo "$$global" >> $@_$$side.conf; \
@@ -239,6 +245,16 @@ run-cert-single-ca:
 	@echo '======= $@ ========'
 	leftid=left-from-ca-both; \
 	rightid=right-from-ca-both; \
+	    ${SETUP_CONFIGS}
+	${SETUP_START}
+	flowtype=esp; ${TEST_FLOWS}; if [[ $$_ret -ne 0 ]]; then exit 1; fi
+	${TEST_PING}; if [[ $$_ret -ne 0 ]]; then exit 1; fi
+
+REGRESS_TARGETS += run-cert-single-ca-asn1dn
+run-cert-single-ca-asn1dn:
+	@echo '======= $@ ========'
+	leftid="/C=DE/ST=Bavaria/L=Munich/O=iked/CN=left-from-ca-both"; \
+	rightid="/C=DE/ST=Bavaria/L=Munich/O=iked/CN=right-from-ca-both"; \
 	    ${SETUP_CONFIGS}
 	${SETUP_START}
 	flowtype=esp; ${TEST_FLOWS}; if [[ $$_ret -ne 0 ]]; then exit 1; fi

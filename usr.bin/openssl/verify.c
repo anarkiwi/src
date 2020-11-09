@@ -1,4 +1,4 @@
-/* $OpenBSD: verify.c,v 1.10 2020/11/03 18:39:18 tb Exp $ */
+/* $OpenBSD: verify.c,v 1.13 2020/11/03 18:50:25 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -68,9 +68,9 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-static int cb(int ok, X509_STORE_CTX * ctx);
-static int check(X509_STORE * ctx, char *file, STACK_OF(X509) * uchain,
-    STACK_OF(X509) * tchain, STACK_OF(X509_CRL) * crls);
+static int cb(int ok, X509_STORE_CTX *ctx);
+static int check(X509_STORE *ctx, char *file, STACK_OF(X509) *uchain,
+    STACK_OF(X509) *tchain, STACK_OF(X509_CRL) *crls);
 static int vflags = 0;
 
 static struct {
@@ -260,13 +260,13 @@ verify_usage(void)
 int
 verify_main(int argc, char **argv)
 {
-	int i, ret = 1;
 	STACK_OF(X509) *untrusted = NULL, *trusted = NULL;
 	STACK_OF(X509_CRL) *crls = NULL;
 	X509_STORE *cert_ctx = NULL;
 	X509_LOOKUP *lookup = NULL;
 	char **cert_files = NULL;
 	int argsused;
+	int ret = 1;
 
 	if (single_execution) {
 		if (pledge("stdio rpath", NULL) == -1) {
@@ -297,9 +297,10 @@ verify_main(int argc, char **argv)
 	if (lookup == NULL)
 		abort(); /* XXX */
 	if (verify_config.CAfile) {
-		i = X509_LOOKUP_load_file(lookup, verify_config.CAfile, X509_FILETYPE_PEM);
-		if (!i) {
-			BIO_printf(bio_err, "Error loading file %s\n", verify_config.CAfile);
+		if (!X509_LOOKUP_load_file(lookup, verify_config.CAfile,
+		    X509_FILETYPE_PEM)) {
+			BIO_printf(bio_err, "Error loading file %s\n",
+			    verify_config.CAfile);
 			ERR_print_errors(bio_err);
 			goto end;
 		}
@@ -310,9 +311,10 @@ verify_main(int argc, char **argv)
 	if (lookup == NULL)
 		abort(); /* XXX */
 	if (verify_config.CApath) {
-		i = X509_LOOKUP_add_dir(lookup, verify_config.CApath, X509_FILETYPE_PEM);
-		if (!i) {
-			BIO_printf(bio_err, "Error loading directory %s\n", verify_config.CApath);
+		if (!X509_LOOKUP_add_dir(lookup, verify_config.CApath,
+		    X509_FILETYPE_PEM)) {
+			BIO_printf(bio_err, "Error loading directory %s\n",
+			    verify_config.CApath);
 			ERR_print_errors(bio_err);
 			goto end;
 		}
@@ -322,14 +324,14 @@ verify_main(int argc, char **argv)
 	ERR_clear_error();
 
 	if (verify_config.untfile) {
-		untrusted = load_certs(bio_err, verify_config.untfile, FORMAT_PEM,
-		    NULL, "untrusted certificates");
+		untrusted = load_certs(bio_err, verify_config.untfile,
+		    FORMAT_PEM, NULL, "untrusted certificates");
 		if (!untrusted)
 			goto end;
 	}
 	if (verify_config.trustfile) {
-		trusted = load_certs(bio_err, verify_config.trustfile, FORMAT_PEM,
-		    NULL, "trusted certificates");
+		trusted = load_certs(bio_err, verify_config.trustfile,
+		    FORMAT_PEM, NULL, "trusted certificates");
 		if (!trusted)
 			goto end;
 	}
@@ -345,8 +347,8 @@ verify_main(int argc, char **argv)
 			ret = -1;
 	} else {
 		do {
-			if (1 != check(cert_ctx, *cert_files++, untrusted, trusted,
-			    crls))
+			if (1 != check(cert_ctx, *cert_files++, untrusted,
+			    trusted, crls))
 				ret = -1;
 		} while (*cert_files != NULL);
 	}
@@ -410,7 +412,7 @@ check(X509_STORE *ctx, char *file, STACK_OF(X509) *uchain,
 }
 
 static int
-cb(int ok, X509_STORE_CTX * ctx)
+cb(int ok, X509_STORE_CTX *ctx)
 {
 	int cert_error = X509_STORE_CTX_get_error(ctx);
 	X509 *current_cert = X509_STORE_CTX_get_current_cert(ctx);

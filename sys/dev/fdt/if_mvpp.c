@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mvpp.c,v 1.27 2020/08/22 12:34:14 patrick Exp $	*/
+/*	$OpenBSD: if_mvpp.c,v 1.33 2020/11/08 14:43:36 kettenis Exp $	*/
 /*
  * Copyright (c) 2008, 2019 Mark Kettenis <kettenis@openbsd.org>
  * Copyright (c) 2017, 2020 Patrick Wildt <patrick@blueri.se>
@@ -258,6 +258,8 @@ struct cfdriver mvpp_cd = {
 	NULL, "mvpp", DV_IFNET
 };
 
+void	mvpp2_port_attach_sfp(struct device *);
+
 uint32_t mvpp2_read(struct mvpp2_softc *, bus_addr_t);
 void	mvpp2_write(struct mvpp2_softc *, bus_addr_t, uint32_t);
 uint32_t mvpp2_gmac_read(struct mvpp2_port *, bus_addr_t);
@@ -487,6 +489,10 @@ mvpp2_attach_deferred(struct device *self)
 
 	mvpp2_axi_config(sc);
 
+	bus_space_write_4(sc->sc_iot, sc->sc_ioh_iface, MVPP22_SMI_MISC_CFG_REG,
+	    bus_space_read_4(sc->sc_iot, sc->sc_ioh_iface,
+	    MVPP22_SMI_MISC_CFG_REG) & ~MVPP22_SMI_POLLING_EN);
+
 	sc->sc_aggr_ntxq = 1;
 	sc->sc_aggr_txqs = mallocarray(sc->sc_aggr_ntxq,
 	    sizeof(*sc->sc_aggr_txqs), M_DEVBUF, M_WAITOK | M_ZERO);
@@ -559,7 +565,7 @@ mvpp2_bm_pool_init(struct mvpp2_softc *sc)
 	struct mvpp2_bm_pool *bm;
 	struct mvpp2_buf *rxb;
 	uint64_t phys, virt;
-	int i, j;
+	int i, j, inuse;
 
 	for (i = 0; i < MVPP2_BM_POOLS_NUM; i++) {
 		mvpp2_write(sc, MVPP2_BM_INTR_MASK_REG(i), 0);
@@ -577,15 +583,19 @@ mvpp2_bm_pool_init(struct mvpp2_softc *sc)
 		bm->bm_mem = mvpp2_dmamem_alloc(sc,
 		    MVPP2_BM_SIZE * sizeof(uint64_t) * 2,
 		    MVPP2_BM_POOL_PTR_ALIGN);
-		memset(MVPP2_DMA_KVA(bm->bm_mem), 0, MVPP2_DMA_LEN(bm->bm_mem));
+		KASSERT(bm->bm_mem != NULL);
 		bus_dmamap_sync(sc->sc_dmat, MVPP2_DMA_MAP(bm->bm_mem), 0,
 		    MVPP2_DMA_LEN(bm->bm_mem),
 		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
+		mvpp2_write(sc, MVPP2_BM_POOL_CTRL_REG(i),
+		    mvpp2_read(sc, MVPP2_BM_POOL_CTRL_REG(i)) |
+		    MVPP2_BM_STOP_MASK);
+
 		mvpp2_write(sc, MVPP2_BM_POOL_BASE_REG(i),
-		    (uint64_t)MVPP2_DMA_KVA(bm->bm_mem) & 0xffffffff);
+		    (uint64_t)MVPP2_DMA_DVA(bm->bm_mem) & 0xffffffff);
 		mvpp2_write(sc, MVPP22_BM_POOL_BASE_HIGH_REG,
-		    ((uint64_t)MVPP2_DMA_KVA(bm->bm_mem) >> 32)
+		    ((uint64_t)MVPP2_DMA_DVA(bm->bm_mem) >> 32)
 		    & MVPP22_BM_POOL_BASE_HIGH_MASK);
 		mvpp2_write(sc, MVPP2_BM_POOL_SIZE_REG(i),
 		    MVPP2_BM_SIZE);
@@ -593,6 +603,23 @@ mvpp2_bm_pool_init(struct mvpp2_softc *sc)
 		mvpp2_write(sc, MVPP2_BM_POOL_CTRL_REG(i),
 		    mvpp2_read(sc, MVPP2_BM_POOL_CTRL_REG(i)) |
 		    MVPP2_BM_START_MASK);
+
+		/*
+		 * U-Boot might not have cleaned its pools.  The pool needs
+		 * to be empty before we fill it, otherwise our packets are
+		 * written to wherever U-Boot allocated memory.  Cleaning it
+		 * up ourselves is worrying as well, since the BM's pages are
+		 * probably in our own memory.  Best we can do is stop the BM,
+		 * set new memory and drain the pool.
+		 */
+		inuse = mvpp2_read(sc, MVPP2_BM_POOL_PTRS_NUM_REG(i)) &
+		    MVPP2_BM_POOL_PTRS_NUM_MASK;
+		inuse += mvpp2_read(sc, MVPP2_BM_BPPI_PTRS_NUM_REG(i)) &
+		    MVPP2_BM_BPPI_PTRS_NUM_MASK;
+		if (inuse)
+			inuse++;
+		for (j = 0; j < inuse; j++)
+			mvpp2_read(sc, MVPP2_BM_PHY_ALLOC_REG(i));
 
 		mvpp2_write(sc, MVPP2_POOL_BUF_SIZE_REG(i),
 		    roundup(MCLBYTES, 1 << MVPP2_POOL_BUF_SIZE_OFFSET));
@@ -1304,6 +1331,7 @@ mvpp2_port_attach(struct device *parent, struct device *self, void *aux)
 	struct ifnet *ifp;
 	uint32_t phy, reg;
 	int i, idx, len, node;
+	int mii_flags = 0;
 	char *phy_mode;
 	char *managed;
 
@@ -1358,6 +1386,9 @@ mvpp2_port_attach(struct device *parent, struct device *self, void *aux)
 		sc->sc_phyloc = OF_getpropint(node, "reg", MII_PHY_ANY);
 		sc->sc_sfp = OF_getpropint(node, "sfp", sc->sc_sfp);
 	}
+
+	if (sc->sc_sfp)
+		config_mountroot(self, mvpp2_port_attach_sfp);
 
 	if ((len = OF_getproplen(sc->sc_node, "managed")) >= 0) {
 		managed = malloc(len, M_TEMP, M_WAITOK);
@@ -1461,8 +1492,28 @@ mvpp2_port_attach(struct device *parent, struct device *self, void *aux)
 	ifmedia_init(&sc->sc_media, 0, mvpp2_media_change, mvpp2_media_status);
 
 	if (sc->sc_mdio) {
+		switch (sc->sc_phy_mode) {
+		case PHY_MODE_1000BASEX:
+			mii_flags |= MIIF_IS_1000X;
+			break;
+		case PHY_MODE_SGMII:
+			mii_flags |= MIIF_SGMII;
+			break;
+		case PHY_MODE_RGMII_ID:
+			mii_flags |= MIIF_RXID | MIIF_TXID;
+			break;
+		case PHY_MODE_RGMII_RXID:
+			mii_flags |= MIIF_RXID;
+			break;
+		case PHY_MODE_RGMII_TXID:
+			mii_flags |= MIIF_TXID;
+			break;
+		default:
+			break;
+		}
 		mii_attach(self, &sc->sc_mii, 0xffffffff, sc->sc_phyloc,
-		    (sc->sc_phyloc == MII_PHY_ANY) ? 0 : MII_OFFSET_ANY, 0);
+		    (sc->sc_phyloc == MII_PHY_ANY) ? 0 : MII_OFFSET_ANY,
+		    mii_flags);
 		if (LIST_FIRST(&sc->sc_mii.mii_phys) == NULL) {
 			printf("%s: no PHY found!\n", self->dv_xname);
 			ifmedia_add(&sc->sc_mii.mii_media,
@@ -1529,6 +1580,16 @@ mvpp2_port_attach(struct device *parent, struct device *self, void *aux)
 	if (idx >= 0)
 		fdt_intr_establish_idx(sc->sc_node, idx, IPL_NET,
 		    mvpp2_intr, sc, sc->sc_dev.dv_xname);
+}
+
+void
+mvpp2_port_attach_sfp(struct device *self)
+{
+	struct mvpp2_port *sc = (struct mvpp2_port *)self;
+
+	rw_enter(&mvpp2_sff_lock, RW_WRITE);
+	sfp_add_media(sc->sc_sfp, &sc->sc_mii);
+	rw_exit(&mvpp2_sff_lock);
 }
 
 uint32_t
@@ -2233,6 +2294,7 @@ mvpp2_aggr_txq_hw_init(struct mvpp2_softc *sc, struct mvpp2_tx_queue *txq)
 
 	txq->ring = mvpp2_dmamem_alloc(sc,
 	    MVPP2_AGGR_TXQ_SIZE * sizeof(struct mvpp2_tx_desc), 32);
+	KASSERT(txq->ring != NULL);
 	txq->descs = MVPP2_DMA_KVA(txq->ring);
 
 	txq->buf = mallocarray(MVPP2_AGGR_TXQ_SIZE, sizeof(struct mvpp2_buf),
@@ -2268,6 +2330,7 @@ mvpp2_txq_hw_init(struct mvpp2_port *sc, struct mvpp2_tx_queue *txq)
 
 	txq->ring = mvpp2_dmamem_alloc(sc->sc,
 	    MVPP2_NTXDESC * sizeof(struct mvpp2_tx_desc), 32);
+	KASSERT(txq->ring != NULL);
 	txq->descs = MVPP2_DMA_KVA(txq->ring);
 
 	txq->buf = mallocarray(MVPP2_NTXDESC, sizeof(struct mvpp2_buf),
@@ -2326,6 +2389,7 @@ mvpp2_rxq_hw_init(struct mvpp2_port *sc, struct mvpp2_rx_queue *rxq)
 
 	rxq->ring = mvpp2_dmamem_alloc(sc->sc,
 	    MVPP2_NRXDESC * sizeof(struct mvpp2_rx_desc), 32);
+	KASSERT(rxq->ring != NULL);
 	rxq->descs = MVPP2_DMA_KVA(rxq->ring);
 
 	bus_dmamap_sync(sc->sc_dmat, MVPP2_DMA_MAP(rxq->ring),
