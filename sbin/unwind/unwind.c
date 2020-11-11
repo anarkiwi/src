@@ -1,4 +1,4 @@
-/*	$OpenBSD: unwind.c,v 1.50 2020/11/05 16:22:59 florian Exp $	*/
+/*	$OpenBSD: unwind.c,v 1.52 2020/11/09 04:22:05 tb Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -653,8 +653,7 @@ merge_config(struct uw_conf *conf, struct uw_conf *xconf)
 	}
 
 	/* Remove & discard existing force tree. */
-	for (n = RB_MIN(force_tree, &conf->force); n != NULL; n = nxt) {
-		nxt = RB_NEXT(force_tree, &conf->force, n);
+	RB_FOREACH_SAFE(n, force_tree, &conf->force, nxt) {
 		RB_REMOVE(force_tree, &conf->force, n);
 		free(n);
 	}
@@ -672,8 +671,7 @@ merge_config(struct uw_conf *conf, struct uw_conf *xconf)
 	TAILQ_CONCAT(&conf->uw_dot_forwarder_list,
 	    &xconf->uw_dot_forwarder_list, entry);
 
-	for (n = RB_MIN(force_tree, &xconf->force); n != NULL; n = nxt) {
-		nxt = RB_NEXT(force_tree, &xconf->force, n);
+	RB_FOREACH_SAFE(n, force_tree, &xconf->force, nxt) {
 		RB_REMOVE(force_tree, &xconf->force, n);
 		RB_INSERT(force_tree, &conf->force, n);
 	}
@@ -886,7 +884,11 @@ imsg_receive_config(struct imsg *imsg, struct uw_conf **xconf)
 			fatal(NULL);
 		memcpy(force_entry, imsg->data, sizeof(struct
 		    force_tree_entry));
-		RB_INSERT(force_tree, &nconf->force, force_entry);
+		if (RB_INSERT(force_tree, &nconf->force, force_entry) != NULL) {
+			free(force_entry);
+			fatalx("%s: IMSG_RECONF_FORCE duplicate entry",
+			    __func__);
+		}
 		break;
 	default:
 		log_debug("%s: error handling imsg %d", __func__,

@@ -1,4 +1,4 @@
-/*	$OpenBSD: frontend.c,v 1.53 2020/11/05 16:22:59 florian Exp $	*/
+/*	$OpenBSD: frontend.c,v 1.56 2020/11/09 04:22:05 tb Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -1173,7 +1173,11 @@ parse_blocklist(int fd)
 			fatal("%s: malloc", __func__);
 		if ((bl_node->domain = strdup(line)) == NULL)
 			fatal("%s: strdup", __func__);
-		RB_INSERT(bl_tree, &bl_head, bl_node);
+		if (RB_INSERT(bl_tree, &bl_head, bl_node) != NULL) {
+			log_warnx("duplicate blocked domain \"%s\"", line);
+			free(bl_node->domain);
+			free(bl_node);
+		}
 	}
 	free(line);
 	if (ferror(f))
@@ -1191,9 +1195,9 @@ free_bl(void)
 {
 	struct bl_node	*n, *nxt;
 
-	for (n = RB_MIN(bl_tree, &bl_head); n != NULL; n = nxt) {
-		nxt = RB_NEXT(bl_tree, &bl_head, n);
+	RB_FOREACH_SAFE(n, bl_tree, &bl_head, nxt) {
 		RB_REMOVE(bl_tree, &bl_head, n);
+		free(n->domain);
 		free(n);
 	}
 }
