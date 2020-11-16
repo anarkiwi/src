@@ -1,4 +1,4 @@
-.\"	$OpenBSD: pcamux.4,v 1.4 2020/11/13 10:14:53 patrick Exp $
+.\"	$OpenBSD: pchgpio.4,v 1.1 2020/11/15 17:44:06 kettenis Exp $
 .\"
 .\" Copyright (c) 2020 Mark Kettenis <kettenis@openbsd.org>
 .\"
@@ -14,33 +14,34 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: November 13 2020 $
-.Dt PCAMUX 4
+.Dd $Mdocdate: November 15 2020 $
+.Dt PCHGPIO 4
 .Os
 .Sh NAME
-.Nm pcamux
-.Nd Philips PCA954[678] I2C switch/mux
+.Nm pchgpio
+.Nd Intel PCH GPIO controller
 .Sh SYNOPSIS
-.Cd "pcamux* at iic?"
-.Cd "iic* at pcamux?"
+.Cd "pchgpio* at acpi?"
 .Sh DESCRIPTION
 The
 .Nm
-driver provides support for the Philips PCA954[68] I2C switch
-and Philips PCA9547 I2C mux, which is used with the
-.Xr iic 4
-framework.
+driver provides support for the GPIO controllers found on Intel PCHs.
+It does not provide direct device driver entry points but makes its
+functions available to
+.Xr acpi 4 .
 .Sh SEE ALSO
-.Xr iic 4 ,
+.Xr acpi 4 ,
 .Xr intro 4
 .Sh HISTORY
 The
 .Nm
 driver first appeared in
-.Ox 6.8 .
+.Ox 6.9 .
 .Sh AUTHORS
 .An -nosplit
 The
 .Nm
 driver was written by
-.An Mark Kettenis Aq Mt kettenis@openbsd.org .
+.An Mark Kettenis Aq Mt kettenis@openbsd.org
+and
+.An James Hastings .

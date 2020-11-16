@@ -1,6 +1,6 @@
-.\"	$OpenBSD: pcamux.4,v 1.4 2020/11/13 10:14:53 patrick Exp $
+.\"	$OpenBSD: acpige.4,v 1.1 2020/11/15 18:04:10 patrick Exp $
 .\"
-.\" Copyright (c) 2020 Mark Kettenis <kettenis@openbsd.org>
+.\" Copyright (c) 2020 Patrick Wildt <patrick@blueri.se>
 .\"
 .\" Permission to use, copy, modify, and distribute this software for any
 .\" purpose with or without fee is hereby granted, provided that the above
@@ -14,33 +14,29 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: November 13 2020 $
-.Dt PCAMUX 4
+.Dd $Mdocdate: November 15 2020 $
+.Dt ACPIGE 4
 .Os
 .Sh NAME
-.Nm pcamux
-.Nd Philips PCA954[678] I2C switch/mux
+.Nm acpige
+.Nd ACPI generic event device
 .Sh SYNOPSIS
-.Cd "pcamux* at iic?"
-.Cd "iic* at pcamux?"
+.Cd "acpige* at acpi?"
 .Sh DESCRIPTION
 The
 .Nm
-driver provides support for the Philips PCA954[68] I2C switch
-and Philips PCA9547 I2C mux, which is used with the
-.Xr iic 4
-framework.
+driver reacts to external events and notifies the corresponding handler.
 .Sh SEE ALSO
-.Xr iic 4 ,
+.Xr acpi 4 ,
 .Xr intro 4
 .Sh HISTORY
 The
 .Nm
 driver first appeared in
-.Ox 6.8 .
+.Ox 6.9 .
 .Sh AUTHORS
 .An -nosplit
 The
 .Nm
 driver was written by
-.An Mark Kettenis Aq Mt kettenis@openbsd.org .
+.An Patrick Wildt Aq Mt patrick@blueri.se .
