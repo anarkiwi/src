@@ -1,4 +1,4 @@
-/*	$OpenBSD: kroute.c,v 1.189 2020/11/06 21:15:41 krw Exp $	*/
+/*	$OpenBSD: kroute.c,v 1.192 2020/11/21 18:34:25 krw Exp $	*/
 
 /*
  * Copyright 2012 Kenneth R Westerback <krw@openbsd.org>
@@ -619,7 +619,8 @@ default_route_index(int rdomain, int routefd)
 		if (m_rtmsg.m_rtm.rtm_version == RTM_VERSION &&
 		    m_rtmsg.m_rtm.rtm_type == RTM_GET &&
 		    m_rtmsg.m_rtm.rtm_pid == pid &&
-		    m_rtmsg.m_rtm.rtm_seq == seq) {
+		    m_rtmsg.m_rtm.rtm_seq == seq &&
+		    (m_rtmsg.m_rtm.rtm_flags & RTF_UP) == RTF_UP) {
 			if (m_rtmsg.m_rtm.rtm_errno != 0) {
 				log_warnx("%s: read(RTM_GET): %s", log_procname,
 				    strerror(m_rtmsg.m_rtm.rtm_errno));
@@ -801,6 +802,7 @@ void
 priv_write_resolv_conf(int index, int routefd, int rdomain, char *contents,
     int *lastidx)
 {
+	char		 ifname[IF_NAMESIZE];
 	const char	*path = "/etc/resolv.conf";
 	ssize_t		 n;
 	size_t		 sz;
@@ -815,19 +817,27 @@ priv_write_resolv_conf(int index, int routefd, int rdomain, char *contents,
 		retries++;
 	} while (newidx == 0 && retries < 3);
 
-	if (newidx != index) {
+	if (newidx == 0) {
+		log_debug("%s: %s not updated, no default route is UP",
+		    log_procname, path);
+		return;
+	} else if (newidx != index) {
 		*lastidx = newidx;
-		log_debug("%s priv_write_resolv_conf: not my problem "
-		    "(%d != %d)", log_procname, newidx, index);
+		if (if_indextoname(newidx, ifname) == NULL) {
+			memset(ifname, 0, sizeof(ifname));
+			strlcat(ifname, "<unknown>", sizeof(ifname));
+		}
+		log_debug("%s: %s not updated, default route on %s",
+		    log_procname, path, ifname);
 		return;
 	} else if (newidx == *lastidx) {
-		log_debug("%s priv_write_resolv_conf: already written",
-		    log_procname);
+		log_debug("%s: %s not updated, same as last write",
+		    log_procname, path);
 		return;
-	} else {
-		*lastidx = newidx;
-		log_debug("%s priv_write_resolv_conf: writing", log_procname);
 	}
+
+	*lastidx = newidx;
+	log_debug("%s: %s updated", log_procname, path);
 
 	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC,
 	    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -890,7 +900,8 @@ propose(struct proposal *proposal)
 
 void
 priv_propose(char *name, int ioctlfd, struct proposal *proposal,
-    size_t sz, char **resolv_conf, int routefd, int rdomain, int index)
+    size_t sz, char **resolv_conf, int routefd, int rdomain, int index,
+    int *lastidx)
 {
 	struct unwind_info	 unwind_info;
 	struct ifreq		 ifr;
@@ -951,6 +962,9 @@ priv_propose(char *name, int ioctlfd, struct proposal *proposal,
 
 	set_routes(name, index, rdomain, routefd, proposal->address,
 	    proposal->netmask, routes, proposal->routes_len);
+
+	*lastidx = 0;
+	priv_write_resolv_conf(index, routefd, rdomain, *resolv_conf, lastidx);
 }
 
 /*

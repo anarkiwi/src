@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhclient.c,v 1.679 2020/11/06 21:53:55 krw Exp $	*/
+/*	$OpenBSD: dhclient.c,v 1.686 2020/11/21 20:36:39 krw Exp $	*/
 
 /*
  * Copyright 2004 Henning Brauer <henning@openbsd.org>
@@ -242,6 +242,7 @@ interface_state(struct interface_info *ifi)
 {
 	struct ether_addr		 hw;
 	struct ifaddrs			*ifap, *ifa;
+	struct sockaddr_dl		*sdl;
 	int				 newlinkup, oldlinkup;
 
 	oldlinkup = LINK_STATE_IS_UP(ifi->link_state);
@@ -250,8 +251,10 @@ interface_state(struct interface_info *ifi)
 		fatal("getifaddrs");
 
 	ifa = get_link_ifa(ifi->name, ifap);
-	if (ifa == NULL ||
-	    (ifa->ifa_flags & IFF_UP) == 0 ||
+	if (ifa == NULL)
+		fatalx("invalid interface");
+
+	if ((ifa->ifa_flags & IFF_UP) == 0 ||
 	    (ifa->ifa_flags & IFF_RUNNING) == 0) {
 		ifi->link_state = LINK_STATE_DOWN;
 	} else {
@@ -260,7 +263,6 @@ interface_state(struct interface_info *ifi)
 		ifi->mtu =
 		    ((struct if_data *)ifa->ifa_data)->ifi_mtu;
 	}
-	freeifaddrs(ifap);
 
 	newlinkup = LINK_STATE_IS_UP(ifi->link_state);
 	if (newlinkup != oldlinkup) {
@@ -272,13 +274,17 @@ interface_state(struct interface_info *ifi)
 
 	if (newlinkup != 0) {
 		memcpy(&hw, &ifi->hw_address, sizeof(hw));
-		get_hw_address(ifi);
+		sdl = (struct sockaddr_dl *)ifa->ifa_addr;
+		memcpy(ifi->hw_address.ether_addr_octet, LLADDR(sdl),
+		    ETHER_ADDR_LEN);
 		if (memcmp(&hw, &ifi->hw_address, sizeof(hw))) {
 			tick_msg("", 0, INT64_MAX);
 			log_debug("%s: LLADDR changed", log_procname);
 			quit = RESTART;
 		}
 	}
+
+	freeifaddrs(ifap);
 }
 
 void
@@ -361,14 +367,13 @@ rtm_dispatch(struct interface_info *ifi, struct rt_msghdr *rtm)
 			} else if ((ifi->flags & IFI_IN_CHARGE) != 0) {
 				log_debug("%s: yielding responsibility",
 				    log_procname);
-				ifi->state = S_PREBOOT;
 				quit = TERMINATE;
 			}
 		} else if ((rtm->rtm_flags & RTF_PROTO2) != 0) {
 			release_lease(ifi); /* OK even if we sent it. */
-			ifi->state = S_PREBOOT;
 			quit = TERMINATE;
-		}
+		} else
+			return; /* Ignore tell_unwind() proposals. */
 		break;
 
 	case RTM_DESYNC:
@@ -442,7 +447,8 @@ rtm_dispatch(struct interface_info *ifi, struct rt_msghdr *rtm)
 	 */
 	if (quit == 0 && ifi->active != NULL &&
 	    (ifi->flags & IFI_AUTOCONF) != 0 &&
-	    (ifi->flags & IFI_IN_CHARGE) != 0)
+	    (ifi->flags & IFI_IN_CHARGE) != 0 &&
+	    ifi->state == S_BOUND)
 		write_resolv_conf();
 }
 
@@ -716,6 +722,8 @@ state_preboot(struct interface_info *ifi)
 void
 state_reboot(struct interface_info *ifi)
 {
+	struct client_lease		*lease;
+
 	cancel_timeout(ifi);
 
 	/*
@@ -728,8 +736,10 @@ state_reboot(struct interface_info *ifi)
 		state_init(ifi);
 		return;
 	}
-	ifi->expiry = lease_expiry(ifi->active);
-	ifi->rebind = lease_rebind(ifi->active);
+	lease = apply_defaults(ifi->active);
+	ifi->expiry = lease_expiry(lease);
+	ifi->rebind = lease_rebind(lease);
+	free_client_lease(lease);
 
 	ifi->xid = arc4random();
 	make_request(ifi, ifi->active);
@@ -1054,7 +1064,6 @@ newlease:
 	 * place when dhclient(8) goes daemon.
 	 */
 	write_lease_db(&ifi->lease_db);
-	write_resolv_conf();
 
 	free_client_lease(lease);
 	free(effective_proposal);
@@ -2528,7 +2537,7 @@ take_charge(struct interface_info *ifi, int routefd, char *leasespath)
 		if (nfds == 1 && (fds[0].revents & POLLIN) == POLLIN)
 			routefd_handler(ifi, routefd);
 
-		if ((ifi->flags & IFI_IN_CHARGE) == IFI_IN_CHARGE) {
+		if (quit != TERMINATE && (ifi->flags & IFI_IN_CHARGE) == IFI_IN_CHARGE) {
 			fd = open(leasespath, O_NONBLOCK |
 			    O_RDONLY|O_EXLOCK|O_CREAT|O_NOFOLLOW, 0640);
 			if (fd == -1 && errno != EWOULDBLOCK)
@@ -2624,7 +2633,7 @@ lease_rebind(struct client_lease *lease)
 	expiry = lease_expiry(lease) - lease->epoch;
 	renewal = lease_renewal(lease) - lease->epoch;
 
-	rebind = (expiry * 7) / 8;
+	rebind = (expiry / 8) * 7;
 	if (lease->options[DHO_DHCP_REBINDING_TIME].len == sizeof(rebind)) {
 		memcpy(&rebind, lease->options[DHO_DHCP_REBINDING_TIME].data,
 		    sizeof(rebind));

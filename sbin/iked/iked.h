@@ -1,4 +1,4 @@
-/*	$OpenBSD: iked.h,v 1.171 2020/10/30 23:05:39 tobhe Exp $	*/
+/*	$OpenBSD: iked.h,v 1.173 2020/11/21 19:23:53 tobhe Exp $	*/
 
 /*
  * Copyright (c) 2019 Tobias Heider <tobias.heider@stusta.de>
@@ -852,7 +852,7 @@ void	 policy_ref(struct iked *, struct iked_policy *);
 void	 policy_unref(struct iked *, struct iked_policy *);
 void	 sa_state(struct iked *, struct iked_sa *, int);
 void	 sa_stateflags(struct iked_sa *, unsigned int);
-int	 sa_stateok(struct iked_sa *, int);
+int	 sa_stateok(const struct iked_sa *, int);
 struct iked_sa *
 	 sa_new(struct iked *, uint64_t, uint64_t, unsigned int,
 	    struct iked_policy *);
@@ -950,7 +950,7 @@ struct ibuf *
 	    size_t);
 ssize_t	 ikev2_psk(struct iked_sa *, uint8_t *, size_t, uint8_t **);
 ssize_t	 ikev2_nat_detection(struct iked *, struct iked_message *,
-	    void *, size_t, unsigned int);
+	    void *, size_t, unsigned int, int);
 int	 ikev2_send_informational(struct iked *, struct iked_message *);
 int	 ikev2_send_ike_e(struct iked *, struct iked_sa *, struct ibuf *,
 	    uint8_t, uint8_t, int);
@@ -1028,7 +1028,7 @@ int	 ikev2_pld_parse(struct iked *, struct ike_header *,
 	    struct iked_message *, size_t);
 
 /* eap.c */
-int	 eap_parse(struct iked *, struct iked_sa *, struct iked_message*,
+int	 eap_parse(struct iked *, const struct iked_sa *, struct iked_message*,
 	    void *, int);
 int	 eap_success(struct iked *, struct iked_sa *, int);
 int	 eap_identity_request(struct iked *, struct iked_sa *);

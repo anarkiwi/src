@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_verify.c,v 1.20 2020/11/15 17:54:49 beck Exp $ */
+/* $OpenBSD: x509_verify.c,v 1.24 2020/11/18 17:54:46 tb Exp $ */
 /*
  * Copyright (c) 2020 Bob Beck <beck@openbsd.org>
  *
@@ -86,7 +86,7 @@ x509_verify_chain_dup(struct x509_verify_chain *chain)
 {
 	struct x509_verify_chain *new_chain;
 
-	if ((new_chain = x509_verify_chain_new()) == NULL)
+	if ((new_chain = calloc(1, sizeof(*chain))) == NULL)
 		goto err;
 	if ((new_chain->certs = X509_chain_up_ref(chain->certs)) == NULL)
 		goto err;
@@ -488,7 +488,6 @@ x509_verify_build_chains(struct x509_verify_ctx *ctx, X509 *cert,
 			ctx->error = (depth == 0) ?
 			    X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
 			    X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN;
-
 	}
 
 	for (i = 0; i < sk_X509_num(ctx->roots); i++) {
@@ -1002,11 +1001,10 @@ x509_verify(struct x509_verify_ctx *ctx, X509 *leaf, char *name)
 	 * We could not find a validated chain, and for some reason do not
 	 * have an error set.
 	 */
-	if (ctx->chains_count == 0 && ctx->error == 0) {
+	if (ctx->chains_count == 0 && ctx->error == X509_V_OK) {
 		ctx->error = X509_V_ERR_UNSPECIFIED;
-		if (ctx->xsc != NULL && ctx->xsc->error != 0)
+		if (ctx->xsc != NULL && ctx->xsc->error != X509_V_OK)
 			ctx->error = ctx->xsc->error;
-
 	}
 
 	/* Clear whatever errors happened if we have any validated chain */
@@ -1014,8 +1012,9 @@ x509_verify(struct x509_verify_ctx *ctx, X509 *leaf, char *name)
 		ctx->error = X509_V_OK;
 
 	if (ctx->xsc != NULL) {
-		/* Take the first chain we found. */
+		ctx->xsc->error = ctx->error;
 		if (ctx->chains_count > 0) {
+			/* Take the first chain we found. */
 			if (!x509_verify_ctx_set_xsc_chain(ctx, ctx->chains[0], 1))
 				goto err;
 		}
