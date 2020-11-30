@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect.c,v 1.343 2020/11/20 02:14:16 dtucker Exp $ */
+/* $OpenBSD: sshconnect.c,v 1.345 2020/11/27 00:49:58 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <limits.h>
 #include <paths.h>
 #include <signal.h>
 #include <pwd.h>
@@ -346,6 +347,10 @@ ssh_create_socket(struct addrinfo *ai)
 		return -1;
 	}
 	fcntl(sock, F_SETFD, FD_CLOEXEC);
+
+	/* Use interactive QOS (if specified) until authentication completed */
+	if (options.ip_qos_interactive != INT_MAX)
+		set_sock_tos(sock, options.ip_qos_interactive);
 
 	/* Bind the socket to an alternative local IP address */
 	if (options.bind_address == NULL && options.bind_interface == NULL)
@@ -1144,8 +1149,8 @@ check_host_key(char *hostname, struct sockaddr *hostaddr, u_short port,
 		 */
 		if (options.strict_host_key_checking !=
 		    SSH_STRICT_HOSTKEY_OFF) {
-			error("%s host key for %.200s has changed and you have "
-			    "requested strict checking.", type, host);
+			error("Host key for %.200s has changed and you have "
+			    "requested strict checking.", host);
 			goto fail;
 		}
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: iked.h,v 1.173 2020/11/21 19:23:53 tobhe Exp $	*/
+/*	$OpenBSD: iked.h,v 1.176 2020/11/29 21:00:43 tobhe Exp $	*/
 
 /*
  * Copyright (c) 2019 Tobias Heider <tobias.heider@stusta.de>
@@ -320,6 +320,7 @@ struct iked_cipher {
 	int		 encr_fixedkey;	/* Requires fixed key length */
 	struct ibuf	*encr_key;	/* MAC key derived from key seed */
 	struct ibuf	*encr_iv;	/* Initialization Vector */
+	uint64_t	 encr_civ;	/* Counter IV for GCM */
 	size_t		 encr_ivlength;	/* IV length */
 	size_t		 encr_length;	/* Block length */
 	size_t		 encr_saltlength;	/* IV salt length */
@@ -715,6 +716,7 @@ struct iked_static {
 	uint8_t			 st_frag;	/* fragmentation */
 	uint8_t			 st_mobike;	/* MOBIKE */
 	in_port_t		 st_nattport;
+	int			 st_stickyaddress; /* addr per DSTID  */
 };
 
 struct iked {
@@ -732,6 +734,7 @@ struct iked {
 #define sc_frag			sc_static.st_frag
 #define sc_mobike		sc_static.st_mobike
 #define sc_nattport		sc_static.st_nattport
+#define sc_stickyaddress	sc_static.st_stickyaddress
 
 	struct iked_policies		 sc_policies;
 	struct iked_policy		*sc_defaultcon;
@@ -802,12 +805,12 @@ void	 config_free_policy(struct iked *, struct iked_policy *);
 struct iked_proposal *
 	 config_add_proposal(struct iked_proposals *, unsigned int,
 	    unsigned int);
+void	 config_free_proposal(struct iked_proposals *, struct iked_proposal *);
 void	 config_free_proposals(struct iked_proposals *, unsigned int);
 void	 config_free_flows(struct iked *, struct iked_flows *);
 void	 config_free_childsas(struct iked *, struct iked_childsas *,
 	    struct iked_spi *, struct iked_spi *);
-struct iked_transform *
-	 config_add_transform(struct iked_proposal *,
+int	 config_add_transform(struct iked_proposal *,
 	    unsigned int, unsigned int, unsigned int, unsigned int);
 int	 config_setcoupled(struct iked *, unsigned int);
 int	 config_getcoupled(struct iked *, unsigned int);
