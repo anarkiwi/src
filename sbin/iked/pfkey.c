@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfkey.c,v 1.72 2020/11/05 19:28:27 phessler Exp $	*/
+/*	$OpenBSD: pfkey.c,v 1.74 2020/12/04 16:18:14 tobhe Exp $	*/
 
 /*
  * Copyright (c) 2010-2013 Reyk Floeter <reyk@openbsd.org>
@@ -921,7 +921,10 @@ pfkey_sa_lookup(int sd, struct iked_childsa *sa, uint64_t *last_used)
 	if (msg->sadb_msg_errno != 0) {
 		errno = msg->sadb_msg_errno;
 		ret = -1;
-		log_warn("%s: message", __func__);
+		if (errno == ESRCH)
+			log_debug("%s: not found", __func__);
+		else
+			log_warn("%s: message", __func__);
 		goto done;
 	}
 	if (last_used) {
@@ -1227,7 +1230,8 @@ pfkey_write(int sd, struct sadb_msg *smsg, struct iovec *iov, int iov_cnt,
 	}
 
 	if ((n = writev(sd, iov, iov_cnt)) == -1) {
-		log_warn("%s: writev failed", __func__);
+		log_warn("%s: writev failed: type %u len %zd",
+		    __func__, smsg->sadb_msg_type, len);
 		return (-1);
 	} else if (n != len) {
 		log_warn("%s: short write", __func__);
@@ -1326,7 +1330,10 @@ pfkey_reply(int sd, uint8_t **datap, ssize_t *lenp)
 	if (datap == NULL && hdr.sadb_msg_errno != 0) {
 		errno = hdr.sadb_msg_errno;
 		if (errno != EEXIST) {
-			log_warn("%s: message", __func__);
+			if (errno == ESRCH)
+				log_debug("%s: not found", __func__);
+			else
+				log_warn("%s: message", __func__);
 			return (-1);
 		}
 	}

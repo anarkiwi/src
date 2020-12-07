@@ -1,4 +1,4 @@
-/*	$OpenBSD: iked.h,v 1.176 2020/11/29 21:00:43 tobhe Exp $	*/
+/*	$OpenBSD: iked.h,v 1.178 2020/12/03 21:57:36 tobhe Exp $	*/
 
 /*
  * Copyright (c) 2019 Tobias Heider <tobias.heider@stusta.de>
@@ -180,7 +180,6 @@ struct iked_childsa {
 	uint8_t				 csa_persistent;/* do not rekey */
 	uint8_t				 csa_esn;	/* use ESN */
 	uint8_t				 csa_transport;	/* transport mode */
-	uint8_t				 csa_acquired;	/* no rekey for me */
 
 	struct iked_spi			 csa_spi;
 
@@ -919,11 +918,11 @@ size_t	 cipher_ivlength(struct iked_cipher *);
 size_t	 cipher_outlength(struct iked_cipher *, size_t);
 
 struct iked_dsa *
-	 dsa_new(uint16_t, struct iked_hash *, int);
+	 dsa_new(uint8_t, struct iked_hash *, int);
 struct iked_dsa *
-	 dsa_sign_new(uint16_t, struct iked_hash *);
+	 dsa_sign_new(uint8_t, struct iked_hash *);
 struct iked_dsa *
-	 dsa_verify_new(uint16_t, struct iked_hash *);
+	 dsa_verify_new(uint8_t, struct iked_hash *);
 struct ibuf *
 	 dsa_setkey(struct iked_dsa *, void *, size_t, uint8_t);
 void	 dsa_free(struct iked_dsa *);
