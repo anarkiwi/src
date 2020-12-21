@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mcx.c,v 1.76 2020/12/12 11:48:53 jan Exp $ */
+/*	$OpenBSD: if_mcx.c,v 1.80 2020/12/17 04:15:03 dlg Exp $ */
 
 /*
  * Copyright (c) 2017 David Gwynne <dlg@openbsd.org>
@@ -983,6 +983,76 @@ struct mcx_cap_device {
 	uint8_t			log_max_tis_per_sq; /* 5 bits */
 #define MCX_CAP_DEVICE_LOG_MAX_TIS_PER_SQ \
 					0x1f
+
+	uint8_t			flags9;
+#define MXC_CAP_DEVICE_EXT_STRIDE_NUM_RANGES \
+					0x80
+#define MXC_CAP_DEVICE_LOG_MAX_STRIDE_SZ_RQ \
+					0x1f
+	uint8_t			log_min_stride_sz_rq; /* 5 bits */
+#define MXC_CAP_DEVICE_LOG_MIN_STRIDE_SZ_RQ \
+					0x1f
+	uint8_t			log_max_stride_sz_sq; /* 5 bits */
+#define MXC_CAP_DEVICE_LOG_MAX_STRIDE_SZ_SQ \
+					0x1f
+	uint8_t			log_min_stride_sz_sq; /* 5 bits */
+#define MXC_CAP_DEVICE_LOG_MIN_STRIDE_SZ_SQ \
+					0x1f
+
+	uint8_t			log_max_hairpin_queues;
+#define MXC_CAP_DEVICE_HAIRPIN		0x80
+#define MXC_CAP_DEVICE_LOG_MAX_HAIRPIN_QUEUES \
+					0x1f
+	uint8_t			log_min_hairpin_queues;
+#define MXC_CAP_DEVICE_LOG_MIN_HAIRPIN_QUEUES \
+					0x1f
+	uint8_t			log_max_hairpin_num_packets;
+#define MXC_CAP_DEVICE_LOG_MAX_HAIRPIN_NUM_PACKETS \
+					0x1f
+	uint8_t			log_max_mq_sz;
+#define MXC_CAP_DEVICE_LOG_MAX_WQ_SZ \
+					0x1f
+
+	uint8_t			log_min_hairpin_wq_data_sz;
+#define MXC_CAP_DEVICE_NIC_VPORT_CHANGE_EVENT \
+					0x80
+#define MXC_CAP_DEVICE_DISABLE_LOCAL_LB_UC \
+					0x40
+#define MXC_CAP_DEVICE_DISABLE_LOCAL_LB_MC \
+					0x20
+#define MCX_CAP_DEVICE_LOG_MIN_HAIRPIN_WQ_DATA_SZ \
+					0x1f
+	uint8_t			log_max_vlan_list;
+#define MXC_CAP_DEVICE_SYSTEM_IMAGE_GUID_MODIFIABLE \
+					0x80
+#define MXC_CAP_DEVICE_LOG_MAX_VLAN_LIST \
+					0x1f
+	uint8_t			log_max_current_mc_list;
+#define MXC_CAP_DEVICE_LOG_MAX_CURRENT_MC_LIST \
+					0x1f
+	uint8_t			log_max_current_uc_list;
+#define MXC_CAP_DEVICE_LOG_MAX_CURRENT_UC_LIST \
+					0x1f
+
+	uint8_t			__reserved__[4];
+
+	uint32_t		create_qp_start_hint; /* 24 bits */
+
+	uint8_t			log_max_uctx; /* 5 bits */
+#define MXC_CAP_DEVICE_LOG_MAX_UCTX	0x1f
+	uint8_t			log_max_umem; /* 5 bits */
+#define MXC_CAP_DEVICE_LOG_MAX_UMEM	0x1f
+	uint16_t		max_num_eqs;
+
+	uint8_t			log_max_l2_table; /* 5 bits */
+#define MXC_CAP_DEVICE_LOG_MAX_L2_TABLE	0x1f
+	uint8_t			__reserved__[1];
+	uint16_t		log_uar_page_sz;
+
+	uint8_t			__reserved__[8];
+
+	uint32_t		device_frequency_mhz;
+	uint32_t		device_frequency_khz;
 } __packed __aligned(8);
 
 CTASSERT(offsetof(struct mcx_cap_device, max_indirection) == 0x20);
@@ -991,6 +1061,8 @@ CTASSERT(offsetof(struct mcx_cap_device, flags2) == 0x30);
 CTASSERT(offsetof(struct mcx_cap_device, snapshot_log_max_msg) == 0x38);
 CTASSERT(offsetof(struct mcx_cap_device, flags5) == 0x40);
 CTASSERT(offsetof(struct mcx_cap_device, flags7) == 0x4c);
+CTASSERT(offsetof(struct mcx_cap_device, device_frequency_mhz) == 0x98);
+CTASSERT(offsetof(struct mcx_cap_device, device_frequency_khz) == 0x9c);
 CTASSERT(sizeof(struct mcx_cap_device) <= MCX_CMDQ_MAILBOX_DATASIZE);
 
 struct mcx_cmd_set_driver_version_in {
@@ -2180,12 +2252,11 @@ struct mcx_calibration {
 	uint64_t		 c_uptime;	/* previous kernel nanouptime */
 	uint64_t		 c_tbase;	/* mcx chip time */
 	uint64_t		 c_ubase;	/* kernel nanouptime */
-	uint64_t		 c_tdiff;
-	uint64_t		 c_udiff;
+	uint64_t		 c_ratio;
 };
 
 #define MCX_CALIBRATE_FIRST    2
-#define MCX_CALIBRATE_NORMAL   30
+#define MCX_CALIBRATE_NORMAL   32
 
 struct mcx_rx {
 	struct mcx_softc	*rx_softc;
@@ -2383,6 +2454,8 @@ struct mcx_softc {
 	struct mcx_calibration	 sc_calibration[2];
 	unsigned int		 sc_calibration_gen;
 	struct timeout		 sc_calibrate;
+	uint32_t		 sc_mhz;
+	uint32_t		 sc_khz;
 
 	struct mcx_queues	 sc_queues[MCX_MAX_QUEUES];
 	unsigned int		 sc_nqueues;
@@ -3788,6 +3861,9 @@ mcx_hca_max_caps(struct mcx_softc *sc)
 	 */
 	sc->sc_bf_size = (1 << hca->log_bf_reg_size) / 2;
 	sc->sc_max_rqt_size = (1 << hca->log_max_rqt_size);
+
+	sc->sc_mhz = bemtoh32(&hca->device_frequency_mhz);
+	sc->sc_khz = bemtoh32(&hca->device_frequency_khz);
 
 free:
 	mcx_dmamem_free(sc, &mxm);
@@ -6514,24 +6590,29 @@ static void
 mcx_calibrate_first(struct mcx_softc *sc)
 {
 	struct mcx_calibration *c = &sc->sc_calibration[0];
+	int s;
 
 	sc->sc_calibration_gen = 0;
 
+	s = splhigh(); /* crit_enter? */
 	c->c_ubase = mcx_uptime();
 	c->c_tbase = mcx_timer(sc);
-	c->c_tdiff = 0;
+	splx(s);
+	c->c_ratio = 0;
 
 	timeout_add_sec(&sc->sc_calibrate, MCX_CALIBRATE_FIRST);
 }
 
-#define MCX_TIMESTAMP_SHIFT 10
+#define MCX_TIMESTAMP_SHIFT 24
 
 static void
 mcx_calibrate(void *arg)
 {
 	struct mcx_softc *sc = arg;
 	struct mcx_calibration *nc, *pc;
+	uint64_t udiff, tdiff;
 	unsigned int gen;
+	int s;
 
 	if (!ISSET(sc->sc_ac.ac_if.if_flags, IFF_RUNNING))
 		return;
@@ -6546,11 +6627,24 @@ mcx_calibrate(void *arg)
 	nc->c_uptime = pc->c_ubase;
 	nc->c_timestamp = pc->c_tbase;
 
+	s = splhigh(); /* crit_enter? */
 	nc->c_ubase = mcx_uptime();
 	nc->c_tbase = mcx_timer(sc);
+	splx(s);
 
-	nc->c_udiff = (nc->c_ubase - nc->c_uptime) >> MCX_TIMESTAMP_SHIFT;
-	nc->c_tdiff = (nc->c_tbase - nc->c_timestamp) >> MCX_TIMESTAMP_SHIFT;
+	udiff = nc->c_ubase - nc->c_uptime;
+	tdiff = nc->c_tbase - nc->c_timestamp;
+
+	/*
+	 * udiff is the wall clock time between calibration ticks,
+	 * which should be 32 seconds or 32 billion nanoseconds. if
+	 * we squint, 1 billion nanoseconds is kind of like a 32 bit
+	 * number, so 32 billion should still have a lot of high bits
+	 * spare. we use this space by shifting the nanoseconds up
+	 * 24 bits so we have a nice big number to divide by the
+	 * number of mcx timer ticks.
+	 */
+	nc->c_ratio = (udiff << MCX_TIMESTAMP_SHIFT) / tdiff;
 
 	membar_producer();
 	sc->sc_calibration_gen = gen;
@@ -6597,12 +6691,14 @@ mcx_process_rx(struct mcx_softc *sc, struct mcx_rx *rx,
 	}
 #endif
 
-	if (c->c_tdiff) {
-		uint64_t t = bemtoh64(&cqe->cq_timestamp) - c->c_timestamp;
-		t *= c->c_udiff;
-		t /= c->c_tdiff;
+	if (ISSET(sc->sc_ac.ac_if.if_flags, IFF_LINK0) && c->c_ratio) {
+		uint64_t t = bemtoh64(&cqe->cq_timestamp);
+		t -= c->c_timestamp;
+		t *= c->c_ratio;
+		t >>= MCX_TIMESTAMP_SHIFT;
+		t += c->c_uptime;
 
-		m->m_pkthdr.ph_timestamp = c->c_uptime + t;
+		m->m_pkthdr.ph_timestamp = t;
 		SET(m->m_pkthdr.csum_flags, M_TIMESTAMP);
 	}
 
