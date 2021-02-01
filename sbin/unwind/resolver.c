@@ -1,4 +1,4 @@
-/*	$OpenBSD: resolver.c,v 1.134 2021/01/24 18:29:15 florian Exp $	*/
+/*	$OpenBSD: resolver.c,v 1.141 2021/01/31 16:07:27 florian Exp $	*/
 
 /*
  * Copyright (c) 2018 Florian Obser <florian@openbsd.org>
@@ -175,7 +175,7 @@ void			 replace_forwarders(struct uw_forwarder_head *,
 void			 resolver_ref(struct uw_resolver *);
 void			 resolver_unref(struct uw_resolver *);
 int			 resolver_cmp(const void *, const void *);
-void			 restart_ub_resolvers(void);
+void			 restart_ub_resolvers(int);
 void			 show_status(pid_t);
 void			 show_autoconf(pid_t);
 void			 show_mem(pid_t);
@@ -230,6 +230,7 @@ struct key_cache		*unified_key_cache;
 struct val_neg_cache		*unified_neg_cache;
 
 int				 dns64_present;
+int				 available_afs = HAVE_IPV4 | HAVE_IPV6;
 
 static const char * const	 as112_zones[] = {
 	/* RFC1918 */
@@ -422,6 +423,8 @@ resolver(int debug, int verbose)
 	TAILQ_INIT(&new_trust_anchors);
 	TAILQ_INIT(&running_queries);
 
+	add_new_ta(&trust_anchors, KSK2017);
+
 	event_dispatch();
 
 	resolver_shutdown();
@@ -462,13 +465,13 @@ resolver_imsg_compose_frontend(int type, pid_t pid, void *data,
 void
 resolver_dispatch_frontend(int fd, short event, void *bula)
 {
-	struct imsgev			*iev = bula;
-	struct imsgbuf			*ibuf;
-	struct imsg			 imsg;
-	struct query_imsg		*query_imsg;
-	ssize_t				 n;
-	int				 shut = 0, verbose, i;
-	char				*ta;
+	struct imsgev		*iev = bula;
+	struct imsgbuf		*ibuf;
+	struct imsg		 imsg;
+	struct query_imsg	*query_imsg;
+	ssize_t			 n;
+	int			 shut = 0, verbose, i, new_available_afs;
+	char			*ta;
 
 	ibuf = &iev->ibuf;
 
@@ -498,9 +501,9 @@ resolver_dispatch_frontend(int fd, short event, void *bula)
 				    "%lu", __func__,
 				    IMSG_DATA_SIZE(imsg));
 			memcpy(&verbose, imsg.data, sizeof(verbose));
-			if ((log_getverbose() & OPT_VERBOSE3)
+			if (log_getdebug() && (log_getverbose() & OPT_VERBOSE3)
 			    != (verbose & OPT_VERBOSE3))
-				restart_ub_resolvers();
+				restart_ub_resolvers(0);
 			log_setverbose(verbose);
 			break;
 		case IMSG_QUERY:
@@ -544,7 +547,7 @@ resolver_dispatch_frontend(int fd, short event, void *bula)
 			break;
 		case IMSG_NEW_TAS_DONE:
 			if (merge_tas(&new_trust_anchors, &trust_anchors))
-				restart_ub_resolvers();
+				restart_ub_resolvers(1);
 			break;
 		case IMSG_NETWORK_CHANGED:
 			clock_gettime(CLOCK_MONOTONIC, &last_network_change);
@@ -566,6 +569,18 @@ resolver_dispatch_frontend(int fd, short event, void *bula)
 				    __func__, IMSG_DATA_SIZE(imsg));
 			replace_autoconf_forwarders((struct
 			    imsg_rdns_proposal *)imsg.data);
+			break;
+		case IMSG_CHANGE_AFS:
+			if (IMSG_DATA_SIZE(imsg) !=
+			    sizeof(new_available_afs))
+				fatalx("%s: IMSG_CHANGE_AFS wrong length: %lu",
+				    __func__, IMSG_DATA_SIZE(imsg));
+			memcpy(&new_available_afs, imsg.data,
+			    sizeof(new_available_afs));
+			if (new_available_afs != available_afs) {
+				available_afs = new_available_afs;
+				restart_ub_resolvers(1);
+			}
 			break;
 		default:
 			log_debug("%s: unexpected imsg %d", __func__,
@@ -1120,6 +1135,7 @@ new_resolver(enum uw_resolver_type type, enum uw_resolver_state state)
 		return;
 
 	switch (state) {
+	case DEAD:
 	case UNKNOWN:
 		check_resolver(resolvers[type]);
 		break;
@@ -1129,9 +1145,6 @@ new_resolver(enum uw_resolver_type type, enum uw_resolver_state state)
 	case RESOLVING:
 		resolvers[type]->state = state;
 		break;
-	default:
-		fatalx("%s: invalid resolver state: %s", __func__,
-		    uw_resolver_state_str[state]);
 	}
 }
 
@@ -1255,15 +1268,38 @@ create_resolver(enum uw_resolver_type type)
 			}
 		}
 
-		if (!log_getdebug()) {
-			if((err = ub_ctx_set_option(res->ctx, "use-syslog:",
-			    "yes")) != 0) {
+		if (!(available_afs & HAVE_IPV4)) {
+			if((err = ub_ctx_set_option(res->ctx, "do-ip4:",
+			    "no")) != 0) {
 				ub_ctx_delete(res->ctx);
 				free(res);
-				log_warnx("error setting use-syslog: yes: %s",
+				log_warnx("error setting do-ip4: no: %s",
 				    ub_strerror(err));
 				return (NULL);
 			}
+		}
+
+		if (!(available_afs & HAVE_IPV6)) {
+			if((err = ub_ctx_set_option(res->ctx, "do-ip6:",
+			    "no")) != 0) {
+				ub_ctx_delete(res->ctx);
+				free(res);
+				log_warnx("error setting do-ip6: no: %s",
+				    ub_strerror(err));
+				return (NULL);
+			}
+		}
+
+		if (!log_getdebug()) {
+			if((err = ub_ctx_set_option(res->ctx, "use-syslog:",
+			    "no")) != 0) {
+				ub_ctx_delete(res->ctx);
+				free(res);
+				log_warnx("error setting use-syslog: no: %s",
+				    ub_strerror(err));
+				return (NULL);
+			}
+			ub_ctx_debugout(res->ctx, NULL);
 		}
 
 		break;
@@ -1479,8 +1515,6 @@ check_resolver(struct uw_resolver *resolver_to_check)
 		evtimer_add(&resolver_to_check->check_ev,
 		    &resolver_to_check->check_tv);
 	}
-
-
 }
 
 void
@@ -1494,6 +1528,12 @@ check_resolver_done(struct uw_resolver *res, void *arg, int rcode,
 	char			*str;
 
 	checked_resolver->check_running--;
+
+	if (checked_resolver != resolvers[checked_resolver->type]) {
+		log_debug("%s: %s: ignoring late check result", __func__,
+		    uw_resolver_type_str[checked_resolver->type]);
+		goto out;
+	}
 
 	prev_state = checked_resolver->state;
 
@@ -1716,14 +1756,20 @@ resolver_cmp(const void *_a, const void *_b)
 }
 
 void
-restart_ub_resolvers(void)
+restart_ub_resolvers(int recheck)
 {
-	int	 i;
+	int			 i;
+	enum uw_resolver_state	 state;
 
-	for (i = 0; i < UW_RES_NONE; i++)
-		if (i != UW_RES_ASR)
-			new_resolver(i, resolvers[i] != NULL ?
-			    resolvers[i]->state : UNKNOWN);
+	for (i = 0; i < UW_RES_NONE; i++) {
+		if (i == UW_RES_ASR)
+			continue;
+		if (recheck || resolvers[i] == NULL)
+			state = UNKNOWN;
+		else
+			state = resolvers[i]->state;
+		new_resolver(i, state);
+	}
 }
 
 void
@@ -1952,19 +1998,19 @@ replace_autoconf_forwarders(struct imsg_rdns_proposal *rdns_proposal)
 		switch (af) {
 		case AF_INET:
 			memcpy(&addr4, src, sizeof(struct in_addr));
+			src += sizeof(struct in_addr);
 			if (addr4.s_addr == INADDR_LOOPBACK)
 				continue;
 			ns = inet_ntop(af, &addr4, ntopbuf,
 			    INET6_ADDRSTRLEN);
-			src += sizeof(struct in_addr);
 			break;
 		case AF_INET6:
 			memcpy(&addr6, src, sizeof(struct in6_addr));
+			src += sizeof(struct in6_addr);
 			if (IN6_IS_ADDR_LOOPBACK(&addr6))
 				continue;
 			ns = inet_ntop(af, &addr6, ntopbuf,
 			    INET6_ADDRSTRLEN);
-			src += sizeof(struct in6_addr);
 		}
 
 		if ((uw_forwarder = calloc(1, sizeof(struct uw_forwarder))) ==

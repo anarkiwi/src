@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.1101 2021/01/19 22:22:23 bluhm Exp $ */
+/*	$OpenBSD: pf.c,v 1.1105 2021/01/28 09:37:20 dlg Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -3937,20 +3937,6 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 		m_copyback(pd->m, pd->off, pd->hdrlen, &pd->hdr, M_NOWAIT);
 	}
 
-#if NPFSYNC > 0
-	if (*sm != NULL && !ISSET((*sm)->state_flags, PFSTATE_NOSYNC) &&
-	    pd->dir == PF_OUT && pfsync_up()) {
-		/*
-		 * We want the state created, but we dont
-		 * want to send this in case a partner
-		 * firewall has to know about it to allow
-		 * replies through it.
-		 */
-		if (pfsync_defer(*sm, pd->m))
-			return (PF_DEFER);
-	}
-#endif	/* NPFSYNC > 0 */
-
 	if (r->rule_flag & PFRULE_ONCE) {
 		u_int32_t	rule_flag;
 
@@ -3966,6 +3952,20 @@ pf_test_rule(struct pf_pdesc *pd, struct pf_rule **rm, struct pf_state **sm,
 			SLIST_INSERT_HEAD(&pf_rule_gcl, r, gcle);
 		}
 	}
+
+#if NPFSYNC > 0
+	if (*sm != NULL && !ISSET((*sm)->state_flags, PFSTATE_NOSYNC) &&
+	    pd->dir == PF_OUT && pfsync_up()) {
+		/*
+		 * We want the state created, but we dont
+		 * want to send this in case a partner
+		 * firewall has to know about it to allow
+		 * replies through it.
+		 */
+		if (pfsync_defer(*sm, pd->m))
+			return (PF_DEFER);
+	}
+#endif	/* NPFSYNC > 0 */
 
 	return (action);
 
@@ -5988,6 +5988,7 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		if ((r->rt == PF_REPLYTO) == (r->direction == pd->dir))
 			return;
 		m0 = pd->m;
+		pd->m = NULL;
 	}
 
 	if (m0->m_len < sizeof(struct ip)) {
@@ -6039,7 +6040,7 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	if (ifp == NULL)
 		goto bad;
 
-	if (pd->kif->pfik_ifp != ifp) {
+	if (r->rt != PF_DUPTO && pd->kif->pfik_ifp != ifp) {
 		if (pf_test(AF_INET, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
 		else if (m0 == NULL)
@@ -6054,6 +6055,10 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 
 	rt = rtalloc(sintosa(dst), RT_RESOLVE, rtableid);
 	if (!rtisvalid(rt)) {
+		if (r->rt != PF_DUPTO) {
+			pf_send_icmp(m0, ICMP_UNREACH, ICMP_UNREACH_HOST,
+			    0, pd->af, s->rule.ptr, pd->rdomain);
+		}
 		ipstat_inc(ips_noroute);
 		goto bad;
 	}
@@ -6108,8 +6113,6 @@ pf_route(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		ipstat_inc(ips_fragmented);
 
 done:
-	if (r->rt != PF_DUPTO)
-		pd->m = NULL;
 	rtfree(rt);
 	return;
 
@@ -6146,6 +6149,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		if ((r->rt == PF_REPLYTO) == (r->direction == pd->dir))
 			return;
 		m0 = pd->m;
+		pd->m = NULL;
 	}
 
 	if (m0->m_len < sizeof(struct ip6_hdr)) {
@@ -6194,7 +6198,7 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	if (ifp == NULL)
 		goto bad;
 
-	if (pd->kif->pfik_ifp != ifp) {
+	if (r->rt != PF_DUPTO && pd->kif->pfik_ifp != ifp) {
 		if (pf_test(AF_INET6, PF_OUT, ifp, &m0) != PF_PASS)
 			goto bad;
 		else if (m0 == NULL)
@@ -6210,6 +6214,11 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 		dst->sin6_addr.s6_addr16[1] = htons(ifp->if_index);
 	rt = rtalloc(sin6tosa(dst), RT_RESOLVE, rtableid);
 	if (!rtisvalid(rt)) {
+		if (r->rt != PF_DUPTO) {
+			pf_send_icmp(m0, ICMP6_DST_UNREACH,
+			    ICMP6_DST_UNREACH_NOROUTE, 0,
+			    pd->af, s->rule.ptr, pd->rdomain);
+ 		}
 		ip6stat_inc(ip6s_noroute);
 		goto bad;
 	}
@@ -6237,8 +6246,6 @@ pf_route6(struct pf_pdesc *pd, struct pf_rule *r, struct pf_state *s)
 	}
 
 done:
-	if (r->rt != PF_DUPTO)
-		pd->m = NULL;
 	rtfree(rt);
 	return;
 
