@@ -1,4 +1,4 @@
-/*	$OpenBSD: ikev2.c,v 1.303 2021/02/04 20:38:26 tobhe Exp $	*/
+/*	$OpenBSD: ikev2.c,v 1.307 2021/02/13 16:14:12 tobhe Exp $	*/
 
 /*
  * Copyright (c) 2019 Tobias Heider <tobias.heider@stusta.de>
@@ -1011,6 +1011,7 @@ ikev2_ike_auth_recv(struct iked *env, struct iked_sa *sa,
 			certlen = ibuf_length(msg->msg_cert.id_buf);
 			bzero(&msg->msg_cert, sizeof(msg->msg_cert));
 		}
+		sa->sa_stateflags &= ~IKED_REQ_CERTVALID;
 		if (ca_setcert(env, &sa->sa_hdr, id, certtype, cert, certlen, PROC_CERT) == -1)
 			return (-1);
 	}
@@ -1615,6 +1616,7 @@ ikev2_init_done(struct iked *env, struct iked_sa *sa)
 		ikev2_enable_timer(env, sa);
 		ikev2_log_established(sa);
 		ikev2_record_dstid(env, sa);
+		sa_configure_iface(env, sa, 1);
 	}
 
 	if (ret)
@@ -2435,11 +2437,14 @@ ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
 	uint64_t			 spi64;
 	uint32_t			 spi32, spi = 0;
 	unsigned int			 i, xfi, nxforms;
+	int				 prop_skipdh;
 
 	TAILQ_FOREACH(prop, proposals, prop_entry) {
 		if ((protoid && prop->prop_protoid != protoid) ||
 		    (!protoid && prop->prop_protoid == IKEV2_SAPROTO_IKE))
 			continue;
+
+		prop_skipdh = skipdh;
 
 		if (protoid != IKEV2_SAPROTO_IKE && initiator) {
 			if (spi == 0) {
@@ -2472,11 +2477,27 @@ ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
 		}
 
 		/*
+		 * A single DH transform of type NONE is equivalent with
+		 * not sending a DH transform at all.
+		 * Prefer the latter for downwards compatibility.
+		 */
+		if (protoid != IKEV2_SAPROTO_IKE) {
+			for (i = 0; i < prop->prop_nxforms; i++) {
+				xform = prop->prop_xforms + i;
+				if (xform->xform_type == IKEV2_XFORMTYPE_DH &&
+				    xform->xform_id != IKEV2_XFORMDH_NONE)
+					break;
+			}
+			if (i == prop->prop_nxforms)
+				prop_skipdh = 1;
+		}
+
+		/*
 		 * RFC 7296: 1.2. The Initial Exchanges
 		 * IKE_AUTH messages do not contain KE/N payloads, thus
 		 * SA payloads cannot contain groups.
 		 */
-		if (skipdh) {
+		if (prop_skipdh) {
 			nxforms = 0;
 			for (i = 0; i < prop->prop_nxforms; i++) {
 				xform = prop->prop_xforms + i;
@@ -2514,7 +2535,7 @@ ikev2_add_proposals(struct iked *env, struct iked_sa *sa, struct ibuf *buf,
 		for (i = 0, xfi = 0; i < prop->prop_nxforms; i++) {
 			xform = prop->prop_xforms + i;
 
-			if (skipdh && xform->xform_type == IKEV2_XFORMTYPE_DH)
+			if (prop_skipdh && xform->xform_type == IKEV2_XFORMTYPE_DH)
 				continue;
 
 			if ((xflen = ikev2_add_transform(buf,
@@ -3826,6 +3847,7 @@ ikev2_send_create_child_sa(struct iked *env, struct iked_sa *sa,
 {
 	struct iked_policy		*pol = sa->sa_policy;
 	struct iked_childsa		*csa = NULL, *csb = NULL;
+	struct iked_transform		*xform;
 	struct ikev2_notify		*n;
 	struct ikev2_payload		*pld = NULL;
 	struct ikev2_keyexchange	*ke;
@@ -3918,8 +3940,8 @@ ikev2_send_create_child_sa(struct iked *env, struct iked_sa *sa,
 		goto done;
 	len = ibuf_size(nonce);
 
-	if (config_findtransform(&pol->pol_proposals, IKEV2_XFORMTYPE_DH,
-	    protoid)) {
+	if ((xform = config_findtransform(&pol->pol_proposals, IKEV2_XFORMTYPE_DH,
+	    protoid)) && group_get(xform->xform_id) != IKEV2_XFORMDH_NONE) {
 		log_debug("%s: enable PFS", __func__);
 		ikev2_sa_cleanup_dh(sa);
 		if (proposed_group) {
@@ -4546,7 +4568,15 @@ ikev2_ikesa_recv_delete(struct iked *env, struct iked_sa *sa)
 		sa->sa_nexti = NULL;	/* reset by sa_free */
 	}
 	ikev2_ike_sa_setreason(sa, "received delete");
-	sa_state(env, sa, IKEV2_STATE_CLOSED);
+	if (env->sc_stickyaddress) {
+		/* delay deletion if client reconnects soon */
+		sa_state(env, sa, IKEV2_STATE_CLOSING);
+		timer_del(env, &sa->sa_timer);
+		timer_set(env, &sa->sa_timer, ikev2_ike_sa_timeout, sa);
+		timer_add(env, &sa->sa_timer, 3 * IKED_RETRANSMIT_TIMEOUT);
+	} else {
+		sa_state(env, sa, IKEV2_STATE_CLOSED);
+	}
 }
 
 int
