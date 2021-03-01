@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_etherbridge.h,v 1.1 2021/02/21 03:26:46 dlg Exp $ */
+/*	$OpenBSD: if_etherbridge.h,v 1.3 2021/02/26 01:28:51 dlg Exp $ */
 
 /*
  * Copyright (c) 2018, 2021 David Gwynne <dlg@openbsd.org>
@@ -42,7 +42,7 @@ struct eb_entry {
 #define ebe_tentry	_ebe_entries._ebe_tentry
 #define ebe_qentry	_ebe_entries._ebe_qentry
 
-	struct ether_addr		 ebe_addr;
+	uint64_t			 ebe_addr;
 	void				*ebe_port;
 	unsigned int			 ebe_type;
 #define EBE_DYNAMIC				0x0
@@ -81,9 +81,12 @@ int	 etherbridge_up(struct etherbridge *);
 int	 etherbridge_down(struct etherbridge *);
 void	 etherbridge_destroy(struct etherbridge *);
 
-void	 etherbridge_map(struct etherbridge *, void *,
-	    const struct ether_addr *);
-void	*etherbridge_resolve(struct etherbridge *, const struct ether_addr *);
+void	 etherbridge_map(struct etherbridge *, void *, uint64_t);
+void	 etherbridge_map_ea(struct etherbridge *, void *,
+	     const struct ether_addr *);
+void	*etherbridge_resolve(struct etherbridge *, uint64_t);
+void	*etherbridge_resolve_ea(struct etherbridge *,
+	     const struct ether_addr *);
 void	 etherbridge_detach_port(struct etherbridge *, void *);
 
 /* ioctl support */
@@ -92,6 +95,9 @@ int	 etherbridge_get_max(struct etherbridge *, struct ifbrparam *);
 int	 etherbridge_set_tmo(struct etherbridge *, struct ifbrparam *);
 int	 etherbridge_get_tmo(struct etherbridge *, struct ifbrparam *);
 int	 etherbridge_rtfind(struct etherbridge *, struct ifbaconf *);
+int	 etherbridge_add_addr(struct etherbridge *, void *,
+	     const struct ether_addr *, unsigned int);
+int	 etherbridge_del_addr(struct etherbridge *, const struct ether_addr *);
 void	 etherbridge_flush(struct etherbridge *, uint32_t);
 
 static inline unsigned int

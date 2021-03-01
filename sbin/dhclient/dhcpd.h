@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpd.h,v 1.292 2021/02/21 18:16:59 krw Exp $	*/
+/*	$OpenBSD: dhcpd.h,v 1.295 2021/02/24 16:18:59 krw Exp $	*/
 
 /*
  * Copyright (c) 2004 Henning Brauer <henning@openbsd.org>
@@ -129,13 +129,13 @@ struct interface_info {
 	int			 rdomain;
 	int			 flags;
 #define IFI_IN_CHARGE		0x01
-#define IFI_AUTOCONF		0x02
 	uint32_t		 mtu;
 	struct dhcp_packet	 recv_packet;
 	struct dhcp_packet	 sent_packet;
 	int			 sent_packet_length;
 	uint32_t		 xid;
 	struct timespec		 timeout;
+	struct timespec		 reboot_timeout;
 	time_t			 expiry, rebind;
 	void			(*timeout_func)(struct interface_info *);
 	uint16_t		 secs;
@@ -230,8 +230,6 @@ char		*rfc1035_as_string(unsigned char *, size_t);
 
 /* packet.c */
 void		 assemble_eh_header(struct ether_addr, struct ether_header *);
-ssize_t		 decode_hw_header(unsigned char *, uint32_t,
-    struct ether_addr *);
 ssize_t		 decode_udp_ip_header(unsigned char *, uint32_t,
     struct sockaddr_in *);
 uint32_t	 checksum(unsigned char *, uint32_t, uint32_t);
