@@ -1,4 +1,4 @@
-/*	$OpenBSD: dhcpleased.c,v 1.4 2021/02/27 17:53:23 florian Exp $	*/
+/*	$OpenBSD: dhcpleased.c,v 1.7 2021/03/07 18:39:11 florian Exp $	*/
 
 /*
  * Copyright (c) 2017, 2021 Florian Obser <florian@openbsd.org>
@@ -90,7 +90,7 @@ static struct imsgev	*iev_engine;
 pid_t			 frontend_pid;
 pid_t			 engine_pid;
 
-int			 routesock, ioctl_sock, rtm_seq = 0;
+int			 routesock, ioctl_sock, rtm_seq, no_lease_files;
 
 void
 main_sig_handler(int sig, short event, void *arg)
@@ -265,13 +265,15 @@ main(int argc, char *argv[])
 #endif /* SMALL */
 
 	if (unveil("/dev/bpf", "rw") == -1)
-		fatal("unveil");
+		fatal("unveil /dev/bpf");
 
-	if (unveil(_PATH_LEASE, "rwc") == -1)
-		fatal("unveil");
+	if (unveil(_PATH_LEASE, "rwc") == -1) {
+		no_lease_files = 1;
+		log_warn("disabling lease files, unveil " _PATH_LEASE);
+	}
 
 	if (unveil(NULL, NULL) == -1)
-		fatal("unveil");
+		fatal("locking unveil");
 #if notyet
 	if (pledge("stdio inet rpath wpath sendfd wroute bpf", NULL) == -1)
 		fatal("pledge");
@@ -405,7 +407,6 @@ main_dispatch_frontend(int fd, short event, void *bula)
 
 		switch (imsg.hdr.type) {
 		case IMSG_OPEN_BPFSOCK:
-			log_debug("IMSG_OPEN_BPFSOCK");
 			if (IMSG_DATA_SIZE(imsg) != sizeof(if_index))
 				fatalx("%s: IMSG_OPEN_BPFSOCK wrong length: "
 				    "%lu", __func__, IMSG_DATA_SIZE(imsg));
@@ -625,8 +626,6 @@ configure_interface(struct imsg_configure_interface *imsg)
 	    IF_NAMESIZE];
 	char			 tmpl[] = _PATH_LEASE"XXXXXXXXXX";
 
-	log_debug("%s", __func__);
-
 	memset(&ifaliasreq, 0, sizeof(ifaliasreq));
 
 	if_name = if_indextoname(imsg->if_index, ifaliasreq.ifra_name);
@@ -635,6 +634,8 @@ configure_interface(struct imsg_configure_interface *imsg)
 		    imsg->if_index);
 		return;
 	}
+
+	log_debug("%s %s", __func__, if_name);
 
 	if (getifaddrs(&ifap) != 0)
 		fatal("getifaddrs");
@@ -710,9 +711,12 @@ configure_interface(struct imsg_configure_interface *imsg)
 	}
 
 	shutdown(udpsock, SHUT_RD);
-	log_debug("%s: udpsock: %d", __func__, udpsock);
+
 	main_imsg_compose_frontend(IMSG_UDPSOCK, udpsock,
 	    &imsg->if_index, sizeof(imsg->if_index));
+
+	if (no_lease_files)
+		return;
 
 	if (inet_ntop(AF_INET, &imsg->addr, ntop_buf, sizeof(ntop_buf)) ==
 	    NULL) {
@@ -767,8 +771,6 @@ deconfigure_interface(struct imsg_configure_interface *imsg)
 	struct ifaliasreq	 ifaliasreq;
 	struct sockaddr_in	*req_sin_addr;
 
-	log_debug("%s", __func__);
-
 	memset(&ifaliasreq, 0, sizeof(ifaliasreq));
 
 	if (imsg->router.s_addr != INADDR_ANY)
@@ -779,6 +781,8 @@ deconfigure_interface(struct imsg_configure_interface *imsg)
 		    imsg->if_index);
 		return;
 	}
+
+	log_debug("%s %s", __func__, ifaliasreq.ifra_name);
 
 	req_sin_addr = (struct sockaddr_in *)&ifaliasreq.ifra_addr;
 	req_sin_addr->sin_family = AF_INET;
@@ -901,9 +905,7 @@ open_bpfsock(uint32_t if_index)
 	int		 bpfsock;
 	char		 ifname[IF_NAMESIZE];
 
-	log_debug("%s: %d", __func__, if_index);
-
-	if (if_indextoname(if_index, ifname) == 0) {
+	if (if_indextoname(if_index, ifname) == NULL) {
 		log_warnx("%s: cannot find interface %d", __func__, if_index);
 		return;
 	}
@@ -965,9 +967,12 @@ read_lease_file(struct imsg_ifinfo *imsg_ifinfo)
 	char	 if_name[IF_NAMESIZE];
 	char	 lease_file_buf[sizeof(_PATH_LEASE) + IF_NAMESIZE];
 
+	if (no_lease_files)
+		return;
+
 	memset(imsg_ifinfo->lease, 0, sizeof(imsg_ifinfo->lease));
 
-	if (if_indextoname(imsg_ifinfo->if_index, if_name) == 0) {
+	if (if_indextoname(imsg_ifinfo->if_index, if_name) == NULL) {
 		log_warnx("%s: cannot find interface %d", __func__,
 		    imsg_ifinfo->if_index);
 		return;
